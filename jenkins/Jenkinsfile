@@ -1,0 +1,264 @@
+// ==============================================================================
+// Declarative Parameterized Jenkins Pipeline (Groovy)
+// Infrastructure-as-Code Quality Gate & Auto-Deployment Engine
+// ==============================================================================
+
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+        ansiColor('xterm')
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'prod'],
+            description: 'Target AWS deployment environment'
+        )
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: 'build-' + env.BUILD_NUMBER,
+            description: 'Docker image tag to build and deploy'
+        )
+        booleanParam(
+            name: 'SKIP_QUALITY_GATE',
+            defaultValue: false,
+            description: 'Emergency override: Bypass SonarQube Quality Gate'
+        )
+        booleanParam(
+            name: 'AUTO_ROLLBACK',
+            defaultValue: true,
+            description: 'Automatically roll back Kubernetes deployment upon smoke test failure'
+        )
+    }
+
+    environment {
+        AWS_REGION       = 'us-east-1'
+        PROJECT_NAME     = 'iac-pipeline'
+        SSM_PATH         = "/iac-pipeline/${params.ENVIRONMENT}"
+        SONAR_HOST_URL   = 'http://sonarqube:9000'
+        GRAFANA_URL      = 'http://grafana.internal:3000'
+        K8S_NAMESPACE    = "${params.ENVIRONMENT}"
+        APP_VERSION      = ''
+        ECR_REPO_URL     = ''
+        EKS_CLUSTER_NAME = ''
+    }
+
+    stages {
+        // Stage 1: Checkout & Dynamic AWS SSM Environment Discovery
+        stage('Checkout & Environment Discovery') {
+            steps {
+                script {
+                    echo "[INFO] Checking out SCM revision..."
+                    checkout scm
+
+                    APP_VERSION = readFile('app/VERSION').trim()
+                    echo "[INFO] Application Version: ${APP_VERSION}"
+                    echo "[INFO] Target Environment: ${params.ENVIRONMENT}"
+                    echo "[INFO] Image Tag: ${params.IMAGE_TAG}"
+
+                    // Discover cluster name and ECR URL from AWS SSM Parameter Store if available
+                    sh '''#!/usr/bin/env bash
+                        set -e
+                        echo "[INFO] Checking AWS IAM Instance Profile / Identity..."
+                        aws sts get-caller-identity || echo "[WARN] AWS CLI not configured yet, continuing..."
+                    '''
+                }
+            }
+        }
+
+        // Stage 2: Terraform Infrastructure Provisioning
+        stage('Terraform Provisioning') {
+            steps {
+                dir('terraform') {
+                    script {
+                        echo "[INFO] Initializing Terraform..."
+                        sh 'terraform init -no-color'
+
+                        echo "[INFO] Generating Terraform Plan for ${params.ENVIRONMENT}..."
+                        sh "terraform plan -var-file=environments/${params.ENVIRONMENT}/terraform.tfvars -out=tfplan -no-color"
+
+                        // Production manual approval gate
+                        if (params.ENVIRONMENT == 'prod') {
+                            input(
+                                id: 'ApprovalGate',
+                                message: 'Approve Terraform Apply for PRODUCTION Infrastructure?',
+                                ok: 'Proceed to Apply'
+                            )
+                        }
+
+                        echo "[INFO] Applying Terraform Plan..."
+                        sh 'terraform apply -auto-approve tfplan -no-color'
+
+                        // Fetch newly published parameters from SSM Parameter Store
+                        ECR_REPO_URL = sh(
+                            script: "aws ssm get-parameter --name ${SSM_PATH}/ecr_repository_url --query 'Parameter.Value' --output text 2>/dev/null || echo '${PROJECT_NAME}-app-${params.ENVIRONMENT}'",
+                            returnStdout: true
+                        ).trim()
+
+                        EKS_CLUSTER_NAME = sh(
+                            script: "aws ssm get-parameter --name ${SSM_PATH}/cluster_name --query 'Parameter.Value' --output text 2>/dev/null || echo '${PROJECT_NAME}-${params.ENVIRONMENT}-eks'",
+                            returnStdout: true
+                        ).trim()
+
+                        echo "[INFO] ECR Repository: ${ECR_REPO_URL}"
+                        echo "[INFO] EKS Cluster:    ${EKS_CLUSTER_NAME}"
+                    }
+                }
+            }
+        }
+
+        // Stage 3: Build Docker Image (Alpine + Bash microservice)
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    echo "[INFO] Building Docker container with app/server.sh..."
+                    sh """
+                        docker build -t ${ECR_REPO_URL}:${params.IMAGE_TAG} \
+                                     -t ${ECR_REPO_URL}:latest \
+                                     -f docker/Dockerfile .
+                    """
+                }
+            }
+        }
+
+        // Stage 4: SonarQube Static Analysis & Quality Gate Enforcement
+        stage('SonarQube Quality Gate') {
+            steps {
+                script {
+                    echo "[INFO] Running ShellCheck static analysis & SonarScanner..."
+                    withSonarQubeEnv('SonarQube-Server') {
+                        sh '''
+                            sonar-scanner -Dproject.settings=jenkins/sonar-project.properties \
+                                          -Dsonar.host.url=${SONAR_HOST_URL} || true
+                        '''
+                    }
+
+                    if (!params.SKIP_QUALITY_GATE) {
+                        echo "[INFO] Waiting for SonarQube Quality Gate response..."
+                        timeout(time: 5, unit: 'MINUTES') {
+                            def qg = waitForQualityGate()
+                            if (qg.status != 'OK') {
+                                error "[FATAL] SonarQube Quality Gate FAILED with status: ${qg.status}. Aborting deployment!"
+                            }
+                            echo "[SUCCESS] Quality Gate PASSED with status: ${qg.status}"
+                        }
+                    } else {
+                        echo "[WARN] Emergency Override: Quality Gate skipped by user parameter!"
+                    }
+                }
+            }
+        }
+
+        // Stage 5: Push Image to AWS ECR
+        stage('Push Image to AWS ECR') {
+            steps {
+                script {
+                    echo "[INFO] Authenticating Docker with AWS ECR..."
+                    sh """
+                        REGISTRY_HOST=\$(echo "${ECR_REPO_URL}" | cut -d'/' -f1)
+                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin \$REGISTRY_HOST
+                        echo "[INFO] Pushing Docker image tags..."
+                        docker push ${ECR_REPO_URL}:${params.IMAGE_TAG}
+                        docker push ${ECR_REPO_URL}:latest
+                    """
+                }
+            }
+        }
+
+        // Stage 6: Deploy to Kubernetes (EKS)
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    echo "[INFO] Updating kubeconfig for EKS Cluster: ${EKS_CLUSTER_NAME}..."
+                    sh """
+                        aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME}
+                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        
+                        echo "[INFO] Applying Kubernetes manifests..."
+                        kubectl apply -f k8s/configmap.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/service.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/ingress.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/hpa.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/deployment.yaml -n ${K8S_NAMESPACE}
+
+                        echo "[INFO] Injecting newly built image: ${ECR_REPO_URL}:${params.IMAGE_TAG}..."
+                        kubectl set image deployment/iac-quality-gate-app bash-microservice=${ECR_REPO_URL}:${params.IMAGE_TAG} -n ${K8S_NAMESPACE}
+
+                        echo "[INFO] Awaiting deployment rollout status..."
+                        kubectl rollout status deployment/iac-quality-gate-app -n ${K8S_NAMESPACE} --timeout=180s
+                    """
+                }
+            }
+        }
+
+        // Stage 7: Post-Deploy Smoke Test
+        stage('Post-Deploy Smoke Test') {
+            steps {
+                script {
+                    echo "[INFO] Executing smoke test against /health endpoint..."
+                    sh """
+                        # Forward local port or query pod IP directly
+                        echo "[INFO] Testing pod health endpoint directly..."
+                        POD=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=iac-quality-gate-app -o jsonpath='{.items[0].metadata.name}')
+                        
+                        echo "[INFO] Curling /health on pod: \$POD..."
+                        HEALTH_JSON=\$(kubectl exec -n ${K8S_NAMESPACE} \$POD -- curl -s -f http://localhost:8080/health)
+                        echo "Response: \$HEALTH_JSON"
+
+                        # Validate JSON status field is ok
+                        STATUS=\$(echo "\$HEALTH_JSON" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+                        if [ "\$STATUS" != "ok" ]; then
+                            echo "[FATAL] Health check returned non-OK status: \$STATUS"
+                            exit 1
+                        fi
+                        echo "[SUCCESS] Smoke test passed successfully! App is healthy."
+                    """
+                }
+            }
+        }
+
+        // Stage 8: Notify & Metrics Telemetry
+        stage('Notify & Metrics Telemetry') {
+            steps {
+                script {
+                    echo "=========================================================="
+                    echo " Deployment Successful!"
+                    echo " Environment:      ${params.ENVIRONMENT}"
+                    echo " Image Tag:        ${params.IMAGE_TAG}"
+                    echo " App Version:      ${APP_VERSION}"
+                    echo " Grafana Monitor:  ${GRAFANA_URL}"
+                    echo "=========================================================="
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs deleteDirs: true, notFailBuild: true
+        }
+        success {
+            echo "[SUCCESS] Pipeline completed all 8 stages and verified quality gates."
+        }
+        failure {
+            script {
+                echo "[ALERT] Pipeline execution failed!"
+                if (params.AUTO_ROLLBACK) {
+                    echo "[ROLLBACK] Auto-rollback triggered. Rolling back deployment in namespace: ${K8S_NAMESPACE}..."
+                    sh """
+                        kubectl rollout undo deployment/iac-quality-gate-app -n ${K8S_NAMESPACE} || true
+                        kubectl rollout status deployment/iac-quality-gate-app -n ${K8S_NAMESPACE} --timeout=120s || true
+                        echo "[ROLLBACK] Deployment rolled back to previous stable revision."
+                    """
+                } else {
+                    echo "[WARN] Auto-rollback is disabled. Deployment left in current state for debugging."
+                }
+            }
+        }
+    }
+}

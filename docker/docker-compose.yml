@@ -1,0 +1,65 @@
+version: "3.8"
+
+networks:
+  pipeline-net:
+    driver: bridge
+
+volumes:
+  jenkins-data:
+    driver: local
+  sonarqube-data:
+    driver: local
+  sonarqube-extensions:
+    driver: local
+
+services:
+  # 1. Sample Bash HTTP Application
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: iac-sample-app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+    networks:
+      - pipeline-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # 2. SonarQube Server for Quality Gate Enforcement
+  sonarqube:
+    image: sonarqube:community
+    container_name: iac-sonarqube
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+    networks:
+      - pipeline-net
+
+  # 3. Jenkins Master Automation Server
+  jenkins:
+    image: jenkins/jenkins:lts-jdk17
+    container_name: iac-jenkins
+    restart: unless-stopped
+    user: root
+    ports:
+      - "8085:8080"
+      - "50000:50000"
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+    volumes:
+      - jenkins-data:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - pipeline-net

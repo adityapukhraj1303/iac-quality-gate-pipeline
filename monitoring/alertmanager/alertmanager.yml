@@ -1,0 +1,19 @@
+# ==============================================================================
+# Alertmanager Notification & Escalation Routing
+# ==============================================================================
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ["alertname", "job", "environment"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: "devops-alerts"
+
+receivers:
+  - name: "devops-alerts"
+    webhook_configs:
+      - url: "http://jenkins:8080/generic-webhook-trigger/invoke"
+        send_resolved: true

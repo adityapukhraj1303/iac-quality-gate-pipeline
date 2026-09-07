@@ -1,0 +1,30 @@
+# Terraform state & cache
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfvars.json
+*secret.tfvars
+
+# Secrets & AWS credentials (Never commit keys!)
+.aws/
+*credentials
+*.pem
+*.key
+*.token
+.env
+.env.*
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Pipeline & Docker build artifacts
+*.log
+docker/build/
+jenkins-data/
+sonarqube-data/

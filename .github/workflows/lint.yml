@@ -1,0 +1,50 @@
+name: Lint & Quality Gate CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: ShellCheck Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck on all Bash scripts
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: "."
+          severity: style
+
+  terraform-fmt:
+    name: Terraform Formatting & Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Verify Terraform Formatting
+        run: |
+          cd terraform
+          terraform fmt -check -recursive
+
+  yaml-lint:
+    name: Kubernetes & Docker YAML Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate YAML files
+        run: |
+          sudo apt-get update && sudo apt-get install -y yamllint
+          yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}}}" k8s/ docker/ monitoring/

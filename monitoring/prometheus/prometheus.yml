@@ -1,0 +1,41 @@
+# ==============================================================================
+# Prometheus Monitoring Configuration
+# Scrapes metrics from Jenkins, SonarQube, Kubernetes Nodes, and Sample App
+# ==============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+rule_files:
+  # - "alerts.yml"
+
+scrape_configs:
+  # 1. Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # 2. Jenkins Metrics (via Prometheus Metrics Plugin)
+  - job_name: "jenkins"
+    metrics_path: "/prometheus"
+    static_configs:
+      - targets: ["jenkins:8080"]
+
+  # 3. SonarQube Metrics
+  - job_name: "sonarqube"
+    metrics_path: "/api/monitoring/metrics"
+    static_configs:
+      - targets: ["sonarqube:9000"]
+
+  # 4. Kubernetes Service & Pod Health Monitoring
+  - job_name: "iac-app-health"
+    metrics_path: "/health"
+    static_configs:
+      - targets: ["app:8080"]

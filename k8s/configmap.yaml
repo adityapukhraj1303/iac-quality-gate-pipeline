@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iac-app-config
+  labels:
+    app: iac-quality-gate-app
+    tier: microservice
+data:
+  PORT: "8080"
+  ENVIRONMENT: "production"
+  SERVICE_NAME: "iac-quality-gate-service"
+  LOG_LEVEL: "INFO"
