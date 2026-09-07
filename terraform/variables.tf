@@ -1,7 +1,7 @@
 variable "aws_region" {
   description = "AWS Region for resource deployment"
   type        = string
-  default     = "us-east-1"
+  default     = "ap-south-1"
 }
 
 variable "environment" {
@@ -25,7 +25,7 @@ variable "vpc_cidr" {
 variable "availability_zones" {
   description = "Availability zones for multi-AZ deployment"
   type        = list(string)
-  default     = ["us-east-1a", "us-east-1b"]
+  default     = ["ap-south-1a", "ap-south-1b"]
 }
 
 variable "public_subnet_cidrs" {
@@ -49,7 +49,7 @@ variable "cluster_version" {
 variable "node_instance_type" {
   description = "EC2 instance type for EKS worker nodes"
   type        = string
-  default     = "t3.medium"
+  default     = "t3.small"
 }
 
 variable "desired_nodes" {
