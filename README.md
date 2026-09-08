@@ -144,7 +144,8 @@ iac-quality-gate-pipeline/
 │   ├── rollback.sh                      # Automated zero-downtime rollback helper
 │   ├── cli.sh                           # Interactive DevOps Bash menu (select loop)
 │   ├── infra.sh                          # Guarded Terraform status/plan/apply wrapper
-│   └── monitoring.sh                     # Install and operate EKS monitoring
+│   ├── monitoring.sh                     # Install and operate EKS monitoring
+│   └── setup.sh                          # One-command cluster connection and monitoring setup
 │   └── setup-github-repo.ps1            # Push helper for GitHub repository
 ├── docs/
 │   └── architecture.md                  # Complete architectural specification
@@ -241,6 +242,22 @@ run `status` again. Do not delete a VPC until its subnets, NAT gateway, EKS
 cluster, and EC2 instances have been checked.
 
 ### EKS Monitoring: Prometheus and Grafana
+
+For the fastest repeatable setup on an already-provisioned EKS cluster, run
+one command from the repository root:
+
+```bash
+bash scripts/setup.sh dev
+```
+
+This discovers the cluster through SSM, updates kubeconfig, waits for the EKS
+cluster to become active, verifies nodes and system pods, then installs or
+repairs the lightweight Prometheus/Grafana release. To only connect and verify
+the cluster without monitoring:
+
+```bash
+SKIP_MONITORING=true bash scripts/setup.sh dev
+```
 
 After Terraform creates the cluster and `kubectl` is connected, install the
 lightweight monitoring stack:
