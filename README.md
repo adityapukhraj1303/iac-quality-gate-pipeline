@@ -130,6 +130,7 @@ iac-quality-gate-pipeline/
 │   ├── Jenkinsfile                      # Declarative parameterized Groovy pipeline (8 stages)
 │   └── sonar-project.properties         # ShellCheck static code analysis rules
 ├── monitoring/
+│   ├── kube-prometheus-values.yaml       # Lightweight EKS Helm configuration
 │   ├── prometheus/
 │   │   └── prometheus.yml               # Prometheus scrape targets (Jenkins, SonarQube, app)
 │   ├── grafana/
@@ -142,6 +143,8 @@ iac-quality-gate-pipeline/
 │   ├── deploy.sh                        # Automated deployment execution & verification
 │   ├── rollback.sh                      # Automated zero-downtime rollback helper
 │   ├── cli.sh                           # Interactive DevOps Bash menu (select loop)
+│   ├── infra.sh                          # Guarded Terraform status/plan/apply wrapper
+│   └── monitoring.sh                     # Install and operate EKS monitoring
 │   └── setup-github-repo.ps1            # Push helper for GitHub repository
 ├── docs/
 │   └── architecture.md                  # Complete architectural specification
@@ -236,6 +239,37 @@ The wrapper refuses to plan or apply when more than one
 silently creating another partial deployment. Resolve the old VPC first, then
 run `status` again. Do not delete a VPC until its subnets, NAT gateway, EKS
 cluster, and EC2 instances have been checked.
+
+### EKS Monitoring: Prometheus and Grafana
+
+After Terraform creates the cluster and `kubectl` is connected, install the
+lightweight monitoring stack:
+
+```bash
+bash scripts/monitoring.sh install
+bash scripts/monitoring.sh status
+```
+
+The committed values file disables Alertmanager, node-exporter, and
+kube-state-metrics to fit the small dev node. Prometheus and Grafana remain
+enabled. The script is safe to rerun after a failed or partial Helm install.
+
+Get the Grafana password and open the UI through an SSH tunnel:
+
+```bash
+bash scripts/monitoring.sh password
+bash scripts/monitoring.sh port-forward grafana
+```
+
+Open `http://localhost:3000` and sign in as `admin`. Prometheus is available
+with `bash scripts/monitoring.sh port-forward prometheus` at
+`http://localhost:9090`.
+
+To remove only the Helm monitoring release:
+
+```bash
+bash scripts/monitoring.sh uninstall
+```
 
 Follow this comprehensive, step-by-step procedure to deploy the entire stack from a blank AWS account:
 
