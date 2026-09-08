@@ -10,7 +10,7 @@ alertmanager:
 nodeExporter:
   enabled: false
 
-kube-state-metrics:
+kubeStateMetrics:
   enabled: false
 
 prometheus:

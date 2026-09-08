@@ -269,7 +269,19 @@ bash scripts/monitoring.sh status
 
 The committed values file disables Alertmanager, node-exporter, and
 kube-state-metrics to fit the small dev node. Prometheus and Grafana remain
-enabled. The script is safe to rerun after a failed or partial Helm install.
+enabled. EKS must have enough pod capacity; a single node already running the
+four `kube-system` pods may reject monitoring pods with `Too many pods`. Scale
+the managed node group to two nodes before installing monitoring:
+
+```bash
+aws eks update-nodegroup-config \
+  --region ap-south-1 \
+  --cluster-name iac-pipeline-dev-eks \
+  --nodegroup-name iac-pipeline-dev-eks-managed-nodes \
+  --scaling-config minSize=2,maxSize=2,desiredSize=2
+```
+
+The script is safe to rerun after a failed or partial Helm install.
 
 Get the Grafana password and open the UI through an SSH tunnel:
 

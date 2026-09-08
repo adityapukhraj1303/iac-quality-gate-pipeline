@@ -11,6 +11,6 @@ cluster_version    = "1.29"
 node_instance_type = "t3.small"
 desired_nodes      = 2
 min_nodes          = 2
-max_nodes          = 4
+max_nodes          = 2
 
-enable_ec2_runner  = true
+enable_ec2_runner  = false
