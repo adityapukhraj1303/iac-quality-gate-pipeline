@@ -222,6 +222,24 @@ No local `.tfstate` files or AWS access keys are shared between machines.
 
 ### Quick, Safe Infrastructure Commands
 
+For a fresh or repeatable full setup, use the single command below from the
+repository root. It plans Terraform, asks for apply confirmation, connects
+kubectl, and installs or repairs monitoring:
+
+```bash
+bash scripts/setup-all.sh dev
+```
+
+Useful non-interactive variants:
+
+```bash
+# Provision infrastructure but do not install monitoring
+SKIP_MONITORING=true bash scripts/setup-all.sh dev
+
+# Only generate the Terraform plan and connect to the existing cluster
+SKIP_APPLY=true SKIP_MONITORING=true bash scripts/setup-all.sh dev
+```
+
 Run these from the repository root on the Ubuntu instance:
 
 ```bash
