@@ -216,6 +216,27 @@ No local `.tfstate` files or AWS access keys are shared between machines.
 
 ## 📖 Day 1 Runbook: Deploying from Scratch on Fresh AWS
 
+### Quick, Safe Infrastructure Commands
+
+Run these from the repository root on the Ubuntu instance:
+
+```bash
+# Check AWS identity, matching VPCs, and Terraform state
+bash scripts/infra.sh dev status
+
+# Review the infrastructure changes
+bash scripts/infra.sh dev plan
+
+# Apply only after reviewing the plan
+bash scripts/infra.sh dev apply
+```
+
+The wrapper refuses to plan or apply when more than one
+`iac-pipeline-dev-vpc` exists. This prevents the duplicate VPC situation from
+silently creating another partial deployment. Resolve the old VPC first, then
+run `status` again. Do not delete a VPC until its subnets, NAT gateway, EKS
+cluster, and EC2 instances have been checked.
+
 Follow this comprehensive, step-by-step procedure to deploy the entire stack from a blank AWS account:
 
 ### Step 1: Clone Repository & Configure AWS CLI
@@ -234,7 +255,8 @@ If you don't already have an S3 bucket and DynamoDB table for Terraform state:
 # Create S3 state bucket
 aws s3api create-bucket \
   --bucket iac-pipeline-terraform-state-$(aws sts get-caller-identity --query Account --output text) \
-  --region us-east-1
+  --region ap-south-1 \
+  --create-bucket-configuration LocationConstraint=ap-south-1
 
 # Enable bucket versioning
 aws s3api put-bucket-versioning \
@@ -247,7 +269,7 @@ aws dynamodb create-table \
   --attribute-definitions AttributeName=LockID,AttributeType=S \
   --key-schema AttributeName=LockID,KeyType=HASH \
   --billing-mode PAY_PER_REQUEST \
-  --region us-east-1
+  --region ap-south-1
 ```
 
 ### Step 3: Provision AWS Infrastructure via Terraform
@@ -281,7 +303,7 @@ aws ssm get-parameters-by-path \
 CLUSTER_NAME=$(aws ssm get-parameter --name "/iac-pipeline/dev/cluster_name" --query "Parameter.Value" --output text)
 
 # Configure kubeconfig
-aws eks update-kubeconfig --region us-east-1 --name "$CLUSTER_NAME"
+aws eks update-kubeconfig --region ap-south-1 --name "$CLUSTER_NAME"
 
 # Verify nodes are Ready
 kubectl get nodes
