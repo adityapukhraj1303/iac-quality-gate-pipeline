@@ -23,11 +23,23 @@ PARAMETERS="$(aws ssm get-parameters-by-path \
     --path "/iac-pipeline/${ENVIRONMENT}" \
     --recursive \
     --region "${REGION}" \
-    --output json)"
+    --output json 2>/dev/null || true)"
 
-CLUSTER_NAME="$(printf '%s' "${PARAMETERS}" | jq -r '.Parameters[] | select(.Name | endswith("/cluster_name")) | .Value')"
-ECR_URL="$(printf '%s' "${PARAMETERS}" | jq -r '.Parameters[] | select(.Name | endswith("/ecr_repository_url")) | .Value')"
-[[ -n "${CLUSTER_NAME}" && "${CLUSTER_NAME}" != "null" ]] || fail "No cluster found in SSM for ${ENVIRONMENT}. Run Terraform first."
+CLUSTER_NAME="$(printf '%s' "${PARAMETERS}" | jq -r '.Parameters[] | select(.Name | endswith("/cluster_name")) | .Value' 2>/dev/null || true)"
+ECR_URL="$(printf '%s' "${PARAMETERS}" | jq -r '.Parameters[] | select(.Name | endswith("/ecr_repository_url")) | .Value' 2>/dev/null || true)"
+
+if [[ -z "${CLUSTER_NAME}" || "${CLUSTER_NAME}" == "null" || "${CLUSTER_NAME}" == "None" ]]; then
+    CLUSTER_NAME="$(aws eks list-clusters --region "${REGION}" --query "clusters[?@ == 'iac-pipeline-${ENVIRONMENT}-eks'] | [0]" --output text 2>/dev/null || true)"
+fi
+
+if [[ -z "${CLUSTER_NAME}" || "${CLUSTER_NAME}" == "null" || "${CLUSTER_NAME}" == "None" ]]; then
+    echo "[INFO] No cluster found for ${ENVIRONMENT}. Creating infrastructure with Terraform..."
+    bash "${PROJECT_ROOT}/scripts/setup-all.sh" "${ENVIRONMENT}" SKIP_MONITORING="${SKIP_MONITORING}"
+    PARAMETERS="$(aws ssm get-parameters-by-path --path "/iac-pipeline/${ENVIRONMENT}" --recursive --region "${REGION}" --output json 2>/dev/null || true)"
+    CLUSTER_NAME="$(printf '%s' "${PARAMETERS}" | jq -r '.Parameters[] | select(.Name | endswith("/cluster_name")) | .Value' 2>/dev/null || true)"
+fi
+
+[[ -n "${CLUSTER_NAME}" && "${CLUSTER_NAME}" != "null" && "${CLUSTER_NAME}" != "None" ]] || fail "No cluster found in SSM or AWS for ${ENVIRONMENT}. Run Terraform first or verify permissions."
 
 echo "[INFO] Connecting kubectl to ${CLUSTER_NAME}..."
 aws eks update-kubeconfig --region "${REGION}" --name "${CLUSTER_NAME}" >/dev/null

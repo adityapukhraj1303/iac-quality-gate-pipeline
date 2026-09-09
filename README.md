@@ -26,6 +26,94 @@ An enterprise-grade, production-style **Infrastructure-as-Code (IaC) Quality Gat
 
 ---
 
+## 🚀 EC2 Copy-Paste Setup (Fresh Instance)
+
+Use these commands on a fresh Ubuntu EC2 instance to set up Terraform, AWS CLI, kubectl, Helm, Docker, Jenkins, Prometheus, Grafana, and the project itself.
+
+> Best practice: attach an IAM role with `AdministratorAccess` or sufficient AWS permissions before running these commands.
+
+```bash
+# 1) Install base packages
+sudo apt-get update -y
+sudo apt-get install -y git curl unzip jq ca-certificates software-properties-common gnupg wget
+
+# 2) Install Docker
+curl -fsSL https://get.docker.com | sh
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+newgrp docker
+
+# 3) Install AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version
+
+# 4) Install Terraform
+wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list >/dev/null
+sudo apt-get update -y
+sudo apt-get install -y terraform
+terraform version
+
+# 5) Install kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+kubectl version --client
+
+# 6) Install Helm
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+helm version
+
+# 7) Configure AWS region and check login
+export AWS_REGION=ap-south-1
+aws configure set region ap-south-1
+aws sts get-caller-identity
+
+# 8) Clone the project
+cd ~
+git clone https://github.com/adityapukhraj1303/iac-quality-gate-pipeline.git
+cd iac-quality-gate-pipeline
+
+# 9) Bootstrap the instance and either reuse the existing cluster or create one automatically
+bash scripts/bootstrap.sh dev
+
+# 10) Connect kubectl, verify cluster, install monitoring stack
+bash scripts/setup.sh dev
+
+# 11) Deploy the app to the cluster
+bash scripts/deploy.sh dev latest
+
+# 12) Check resources
+kubectl get nodes
+kubectl get pods -A
+kubectl get pods -n dev
+
+# 13) Prometheus and Grafana access
+bash scripts/monitoring.sh status
+bash scripts/monitoring.sh password
+bash scripts/monitoring.sh port-forward grafana
+# Open: http://localhost:3000
+bash scripts/monitoring.sh port-forward prometheus
+# Open: http://localhost:9090
+
+# 14) Local Jenkins + SonarQube stack
+cd ~/iac-quality-gate-pipeline
+docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml ps
+# Jenkins: http://<EC2_PUBLIC_IP>:8085
+# SonarQube: http://<EC2_PUBLIC_IP>:9000
+```
+
+### If the cluster already exists
+The project will detect the cluster in AWS SSM and in `aws eks list-clusters`, then automatically reconnect with `aws eks update-kubeconfig`.
+
+### If the cluster does not exist
+The bootstrap flow automatically runs Terraform to create the infrastructure, including VPC, IAM, ECR, and EKS, before connecting `kubectl`.
+
+---
+
 ## 🏗️ System Architecture
 
 ```mermaid
@@ -214,29 +302,38 @@ No local `.tfstate` files or AWS access keys are shared between machines.
    cd iac-quality-gate-pipeline
    bash scripts/bootstrap.sh dev
    ```
-   `bootstrap.sh` automatically detects the OS, installs missing tools (`terraform`, `kubectl`, `helm`, `docker`, `aws-cli`), queries SSM for cluster coordinates, and runs `aws eks update-kubeconfig`.
+   `bootstrap.sh` automatically detects the OS, installs missing tools (`terraform`, `kubectl`, `helm`, `docker`, `aws-cli`), checks AWS SSM and AWS EKS for the live cluster, reuses it if it already exists, and creates the Terraform infrastructure automatically if the cluster does not exist yet.
 
 ### Fresh EC2 startup behavior
 
-This project is designed so a newly started EC2 instance can rejoin the active cluster without using any old local configuration.
+This project is designed so a newly started EC2 instance can either:
+- connect to an existing cluster automatically, or
+- create the full cluster + infrastructure by itself when the cluster is missing.
+
+Use this exact copy-paste sequence on any EC2 instance:
 
 ```bash
-# 1) Login to the EC2 instance with your AWS role / instance profile active
-aws sts get-caller-identity
-
-# 2) Clone and bootstrap the project on the new instance
+# 1) Clone the repo into a writable directory
 git clone https://github.com/adityapukhraj1303/iac-quality-gate-pipeline.git
 cd iac-quality-gate-pipeline
+
+# 2) Bootstrap: installs tools + connects to cluster OR creates one if absent
 bash scripts/bootstrap.sh dev
 
-# 3) Reconnect to the active cluster and verify it is ready
+# 3) Optional: install/repair monitoring and verify the cluster
 bash scripts/setup.sh dev
 
-# 4) Deploy the application to the current cluster
+# 4) Deploy the app to the active cluster
 bash scripts/deploy.sh dev latest
 ```
 
-This works because the cluster metadata is stored in AWS SSM at `/iac-pipeline/{env}/cluster_name`, `/iac-pipeline/{env}/cluster_endpoint`, and related values. Every fresh instance reads those values, reconnects to the current cluster, and does not depend on a previous instance's local kubeconfig or Terraform state.
+### If the cluster already exists
+The script checks for the cluster in AWS SSM and in `aws eks list-clusters` first. If it finds the cluster, it simply runs `aws eks update-kubeconfig` and waits for cluster readiness.
+
+### If the cluster does not exist
+The script automatically executes the Terraform deployment for the dev environment, so the EC2 instance can create the VPC, ECR, IAM, and EKS cluster itself without manual intervention.
+
+This works because the cluster metadata is stored in AWS SSM at `/iac-pipeline/{env}/cluster_name`, `/iac-pipeline/{env}/cluster_endpoint`, and related values. Every fresh instance reads those values, reconnects to the active cluster, and can also provision the environment automatically when it is missing.
 
 > When you start a new EC2 instance, always use the bootstrap + setup flow above instead of relying on old `~/.kube/config` or stale local state files.
 

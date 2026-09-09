@@ -127,37 +127,70 @@ else
     echo "[WARN] No IAM role detected on this instance! AWS commands may require credentials."
 fi
 
-# 9. Fetch parameters from AWS SSM Parameter Store
+# 9. Resolve cluster state dynamically: reuse existing cluster or create it if needed
+connect_to_cluster() {
+    local cluster_name="$1"
+    if [[ -n "$cluster_name" && "$cluster_name" != "null" && "$cluster_name" != "None" ]]; then
+        echo "[INFO] Updating kubeconfig for ${cluster_name}..."
+        aws eks update-kubeconfig --region "${REGION}" --name "${cluster_name}"
+        aws eks wait cluster-active --region "${REGION}" --name "${cluster_name}"
+        echo "[OK] Kubeconfig updated successfully and cluster is active."
+        return 0
+    fi
+    return 1
+}
+
+create_infrastructure_if_needed() {
+    echo "[INFO] No active EKS cluster found in SSM or AWS. Creating infrastructure now..."
+    cd "${PROJECT_ROOT}/terraform"
+    terraform init -upgrade=false -input=false
+    terraform apply -auto-approve -input=false -var-file="environments/${ENV}/terraform.tfvars"
+    echo "[OK] Terraform apply completed. Refreshing cluster metadata..."
+}
+
 echo "[INFO] Pulling environment parameters from AWS SSM: ${SSM_PREFIX}..."
 PARAMETERS=$(aws ssm get-parameters-by-path --path "${SSM_PREFIX}" --region "${REGION}" --output json 2>/dev/null || true)
+CLUSTER_NAME=""
+ECR_URL=""
+VPC_ID=""
 
 if [[ -n "$PARAMETERS" && "$PARAMETERS" != '{"Parameters":[]}' ]]; then
     CLUSTER_NAME=$(echo "$PARAMETERS" | jq -r '.Parameters[] | select(.Name | endswith("/cluster_name")) | .Value')
     ECR_URL=$(echo "$PARAMETERS" | jq -r '.Parameters[] | select(.Name | endswith("/ecr_repository_url")) | .Value')
     VPC_ID=$(echo "$PARAMETERS" | jq -r '.Parameters[] | select(.Name | endswith("/vpc_id")) | .Value')
+fi
 
+if [[ -n "$CLUSTER_NAME" && "$CLUSTER_NAME" != "null" && "$CLUSTER_NAME" != "None" ]]; then
     echo "=========================================================="
     echo " Discovered Infrastructure Coordinates from SSM:"
     echo " EKS Cluster Name: ${CLUSTER_NAME}"
     echo " ECR Repository:   ${ECR_URL}"
     echo " VPC ID:           ${VPC_ID}"
     echo "=========================================================="
-
-    if [[ -n "$CLUSTER_NAME" && "$CLUSTER_NAME" != "null" ]]; then
-        echo "[INFO] Updating kubeconfig for ${CLUSTER_NAME}..."
-        aws eks update-kubeconfig --region "${REGION}" --name "${CLUSTER_NAME}"
-        aws eks wait cluster-active --region "${REGION}" --name "${CLUSTER_NAME}"
-        echo "[OK] Kubeconfig updated successfully and cluster is active."
-    else
-        echo "[WARN] SSM exists but cluster name is empty. Run Terraform and publish the cluster metadata first."
-    fi
+    connect_to_cluster "$CLUSTER_NAME" || echo "[WARN] Cluster metadata was found but kubeconfig connection failed. Continuing with recovery checks..."
 else
-    echo "[INFO] No parameters found under ${SSM_PREFIX} yet. Run Terraform to provision the infrastructure."
-    echo "[INFO] To provision the environment on a fresh AWS account: bash scripts/setup-all.sh ${ENV}"
+    echo "[INFO] No cluster metadata found under ${SSM_PREFIX}. Checking whether the cluster already exists in AWS..."
+    CLUSTER_NAME=$(aws eks list-clusters --region "${REGION}" --query "clusters[?@ == 'iac-pipeline-${ENV}-eks'] | [0]" --output text 2>/dev/null || true)
+    if [[ -n "$CLUSTER_NAME" && "$CLUSTER_NAME" != "None" && "$CLUSTER_NAME" != "null" ]]; then
+        echo "[INFO] Found an existing EKS cluster in AWS: ${CLUSTER_NAME}"
+        connect_to_cluster "$CLUSTER_NAME"
+    else
+        echo "[INFO] No cluster found in AWS. Creating the project infrastructure now."
+        create_infrastructure_if_needed || {
+            echo "[ERROR] Terraform infrastructure creation failed. Check AWS permissions and variables." >&2
+            exit 1
+        }
+        PARAMETERS=$(aws ssm get-parameters-by-path --path "${SSM_PREFIX}" --region "${REGION}" --output json 2>/dev/null || true)
+        CLUSTER_NAME=$(echo "$PARAMETERS" | jq -r '.Parameters[] | select(.Name | endswith("/cluster_name")) | .Value' 2>/dev/null || true)
+        if ! connect_to_cluster "$CLUSTER_NAME"; then
+            echo "[ERROR] Cluster creation completed but kubeconfig connection still failed." >&2
+            exit 1
+        fi
+    fi
 fi
 
 echo "[INFO] Helpful next steps:"
 echo "  1) bash scripts/setup.sh ${ENV}  -> reconnect to cluster + install/repair monitoring"
 echo "  2) bash scripts/deploy.sh ${ENV} latest -> deploy app to Kubernetes"
 echo "  3) bash scripts/rollback.sh ${ENV} -> roll back the last deployment"
-echo "[SUCCESS] Instance bootstrap completed. Environment is ready for pipeline operations!"
+echo "[SUCCESS] Instance bootstrap completed. The EC2 instance is connected to the correct cluster or created it automatically."
