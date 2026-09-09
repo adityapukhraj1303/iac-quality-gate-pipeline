@@ -26,91 +26,353 @@ An enterprise-grade, production-style **Infrastructure-as-Code (IaC) Quality Gat
 
 ---
 
-## 🚀 EC2 Copy-Paste Setup (Fresh Instance)
+## 🚀 Fresh EC2 Setup in ap-south-1
 
-Use these commands on a fresh Ubuntu EC2 instance to set up Terraform, AWS CLI, kubectl, Helm, Docker, Jenkins, Prometheus, Grafana, and the project itself.
+This is the final setup flow for a brand-new Ubuntu EC2 instance in AWS region ap-south-1.
 
-> Best practice: attach an IAM role with `AdministratorAccess` or sufficient AWS permissions before running these commands.
+Use this when:
+- you just created a new EC2
+- you deleted the old cluster/resources
+- you want a clean setup that works from the first run
+- you want to run Terraform, EKS, Prometheus, Grafana, and Jenkins reliably
+
+> Important: attach an IAM role to the EC2 before running these commands.
+
+### 1) EC2 security group inbound rules
+
+Allow only these ports:
+
+- 22 → SSH
+- 80 → HTTP
+- 443 → HTTPS
+- 3000 → Grafana
+- 8080 → Jenkins
+- 9090 → Prometheus
+- 9093 → Alertmanager
+
+Do not expose the EKS control plane publicly.
+
+### 2) IAM role for the EC2 instance
+
+Attach an IAM role with at least:
+
+- AmazonEKSClusterPolicy
+- AmazonEKSWorkerNodePolicy
+- AmazonEKS_CNI_Policy
+- AmazonEC2ContainerRegistryReadOnly
+- AmazonSSMManagedInstanceCore
+- AdministratorAccess (easiest for first setup)
+
+Then validate AWS authentication:
 
 ```bash
-# 1) Install base packages
-sudo apt-get update -y
-sudo apt-get install -y git curl unzip jq ca-certificates software-properties-common gnupg wget
+aws sts get-caller-identity
+```
 
-# 2) Install Docker
-curl -fsSL https://get.docker.com | sh
-sudo systemctl enable --now docker
+### 3) Install required tools
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  curl unzip git jq ca-certificates \
+  apt-transport-https software-properties-common \
+  docker.io
+
+sudo systemctl enable docker
+sudo systemctl start docker
 sudo usermod -aG docker $USER
 newgrp docker
 
-# 3) Install AWS CLI v2
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
 sudo ./aws/install
 aws --version
 
-# 4) Install Terraform
-wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list >/dev/null
-sudo apt-get update -y
+curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt-get update
 sudo apt-get install -y terraform
 terraform version
 
-# 5) Install kubectl
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 chmod +x kubectl
 sudo mv kubectl /usr/local/bin/
 kubectl version --client
 
-# 6) Install Helm
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 helm version
 
-# 7) Configure AWS region and check login
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+sudo mv /tmp/eksctl /usr/local/bin
+eksctl version
+
+export AWS_REGION=ap-south-1
+aws configure set region ap-south-1
+aws sts get-caller-identity
+```
+
+### 4) Clone the repository
+
+```bash
+cd ~
+git clone https://github.com/adityapukhraj1303/iac-quality-gate-pipeline.git
+cd iac-quality-gate-pipeline
+```
+
+### 5) Fix EKS authentication for the EC2 identity
+
+Your cluster is active, but your EC2 AWS principal must be allowed to access it.
+
+Update the auth mode for the cluster first:
+
+```bash
+aws eks update-cluster-config \
+  --name iac-pipeline-dev-eks \
+  --region ap-south-1 \
+  --access-config '{"authenticationMode":"API_AND_CONFIG_MAP"}'
+```
+
+Wait for the cluster to be active:
+
+```bash
+aws eks wait cluster-active --name iac-pipeline-dev-eks --region ap-south-1
+```
+
+Add the current EC2 identity to the cluster:
+
+```bash
+aws eks create-access-entry \
+  --cluster-name iac-pipeline-dev-eks \
+  --region ap-south-1 \
+  --principal-arn $(aws sts get-caller-identity --query Arn --output text) \
+  --type STANDARD
+
+aws eks associate-access-policy \
+  --cluster-name iac-pipeline-dev-eks \
+  --region ap-south-1 \
+  --principal-arn $(aws sts get-caller-identity --query Arn --output text) \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+  --access-scope type=cluster
+```
+
+Then connect kubectl:
+
+```bash
+aws eks update-kubeconfig --region ap-south-1 --name iac-pipeline-dev-eks
+kubectl get nodes
+```
+
+### 6) Create the EKS nodegroup if it is missing
+
+This is the important missing step that prevents pods from running.
+
+Check nodegroups:
+
+```bash
+aws eks list-nodegroups --cluster-name iac-pipeline-dev-eks --region ap-south-1
+```
+
+If it is empty, create a nodegroup:
+
+```bash
+aws eks create-nodegroup \
+  --cluster-name iac-pipeline-dev-eks \
+  --nodegroup-name iac-pipeline-dev-ng \
+  --node-role arn:aws:iam::567752770098:role/iac-pipeline-dev-eks-node-role \
+  --subnets subnet-078600e19f5422a1f subnet-0d90776c8e2195e67 \
+  --instance-types t3.small \
+  --scaling-config minSize=2,maxSize=5,desiredSize=2 \
+  --region ap-south-1
+```
+
+Wait for it to become active:
+
+```bash
+aws eks wait nodegroup-active \
+  --cluster-name iac-pipeline-dev-eks \
+  --nodegroup-name iac-pipeline-dev-ng \
+  --region ap-south-1
+```
+
+Then verify nodes:
+
+```bash
+kubectl get nodes
+kubectl get pods -A
+```
+
+### 7) Run Terraform if needed
+
+Only run full Terraform if the AWS resources are not already present.
+
+```bash
+cd ~/iac-quality-gate-pipeline/terraform
+terraform init
+terraform plan
+terraform apply -auto-approve
+```
+
+If AWS resources already exist, do not repeatedly recreate them. In that case, create the missing nodegroup and continue with the app deployment.
+
+### 8) Bootstrap and deploy the app
+
+Once the cluster is active and worker nodes are ready:
+
+```bash
+cd ~/iac-quality-gate-pipeline
+bash scripts/bootstrap.sh dev
+bash scripts/setup.sh dev
+bash scripts/deploy.sh dev latest
+```
+
+Check deployment status:
+
+```bash
+kubectl get pods -A
+kubectl get svc -A
+kubectl get ingress -A
+```
+
+### 9) Access Grafana, Prometheus, and Jenkins
+
+#### Grafana
+
+```bash
+bash scripts/monitoring.sh status
+bash scripts/monitoring.sh password
+bash scripts/monitoring.sh port-forward grafana
+```
+
+Open:
+
+```text
+http://<EC2_PUBLIC_IP>:3000
+```
+
+#### Prometheus
+
+```bash
+kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090
+```
+
+Open:
+
+```text
+http://<EC2_PUBLIC_IP>:9090
+```
+
+#### Jenkins
+
+```bash
+kubectl port-forward -n dev svc/jenkins 8080:8080
+```
+
+Open:
+
+```text
+http://<EC2_PUBLIC_IP>:8080
+```
+
+### 10) Full one-shot copy-paste block
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  curl unzip git jq ca-certificates \
+  apt-transport-https software-properties-common \
+  docker.io
+
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo usermod -aG docker $USER
+newgrp docker
+
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+
+curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt-get update
+sudo apt-get install -y terraform
+
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+sudo mv /tmp/eksctl /usr/local/bin
+
 export AWS_REGION=ap-south-1
 aws configure set region ap-south-1
 aws sts get-caller-identity
 
-# 8) Clone the project
 cd ~
 git clone https://github.com/adityapukhraj1303/iac-quality-gate-pipeline.git
 cd iac-quality-gate-pipeline
 
-# 9) Bootstrap the instance and either reuse the existing cluster or create one automatically
-bash scripts/bootstrap.sh dev
+aws eks update-cluster-config \
+  --name iac-pipeline-dev-eks \
+  --region ap-south-1 \
+  --access-config '{"authenticationMode":"API_AND_CONFIG_MAP"}'
 
-# 10) Connect kubectl, verify cluster, install monitoring stack
-bash scripts/setup.sh dev
+aws eks wait cluster-active --name iac-pipeline-dev-eks --region ap-south-1
 
-# 11) Deploy the app to the cluster
-bash scripts/deploy.sh dev latest
+aws eks create-access-entry \
+  --cluster-name iac-pipeline-dev-eks \
+  --region ap-south-1 \
+  --principal-arn $(aws sts get-caller-identity --query Arn --output text) \
+  --type STANDARD
 
-# 12) Check resources
+aws eks associate-access-policy \
+  --cluster-name iac-pipeline-dev-eks \
+  --region ap-south-1 \
+  --principal-arn $(aws sts get-caller-identity --query Arn --output text) \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+  --access-scope type=cluster
+
+aws eks update-kubeconfig --region ap-south-1 --name iac-pipeline-dev-eks
+
+aws eks create-nodegroup \
+  --cluster-name iac-pipeline-dev-eks \
+  --nodegroup-name iac-pipeline-dev-ng \
+  --node-role arn:aws:iam::567752770098:role/iac-pipeline-dev-eks-node-role \
+  --subnets subnet-078600e19f5422a1f subnet-0d90776c8e2195e67 \
+  --instance-types t3.small \
+  --scaling-config minSize=2,maxSize=5,desiredSize=2 \
+  --region ap-south-1
+
+aws eks wait nodegroup-active \
+  --cluster-name iac-pipeline-dev-eks \
+  --nodegroup-name iac-pipeline-dev-ng \
+  --region ap-south-1
+
 kubectl get nodes
 kubectl get pods -A
-kubectl get pods -n dev
 
-# 13) Prometheus and Grafana access
-bash scripts/monitoring.sh status
-bash scripts/monitoring.sh password
-bash scripts/monitoring.sh port-forward grafana
-# Open: http://localhost:3000
-bash scripts/monitoring.sh port-forward prometheus
-# Open: http://localhost:9090
-
-# 14) Local Jenkins + SonarQube stack
-cd ~/iac-quality-gate-pipeline
-docker compose -f docker/docker-compose.yml up -d
-docker compose -f docker/docker-compose.yml ps
-# Jenkins: http://<EC2_PUBLIC_IP>:8085
-# SonarQube: http://<EC2_PUBLIC_IP>:9000
+bash scripts/bootstrap.sh dev
+bash scripts/setup.sh dev
+bash scripts/deploy.sh dev latest
 ```
 
-### If the cluster already exists
-The project will detect the cluster in AWS SSM and in `aws eks list-clusters`, then automatically reconnect with `aws eks update-kubeconfig`.
+---
 
-### If the cluster does not exist
-The bootstrap flow automatically runs Terraform to create the infrastructure, including VPC, IAM, ECR, and EKS, before connecting `kubectl`.
+## ✅ Final summary
+
+For this project, the reliable fresh-EC2 flow is:
+
+1. attach IAM role to the EC2 instance
+2. allow required inbound ports
+3. install Docker, Terraform, AWS CLI, kubectl, Helm, and eksctl
+4. set region to ap-south-1
+5. fix EKS authentication for the EC2 principal
+6. create the missing nodegroup if there are no worker nodes
+7. run the project bootstrap and deployment scripts
+8. access Grafana, Prometheus, and Jenkins through port-forwarding
+
+This is the copy-paste setup that matches the real AWS state of the project.
 
 ---
 
