@@ -49,15 +49,15 @@ Then verify AWS login:
 aws sts get-caller-identity
 ```
 
-Example output:
+For this project, the verified AWS principal is:
 
 ```bash
-{
-  "UserId": "AIDAYIMFTYIZA3ZDVJUY2",
-  "Account": "567752770098",
-  "Arn": "arn:aws:iam::567752770098:user/access_001"
-}
+arn:aws:iam::567752770098:user/policy_005
 ```
+
+This is the exact ARN that was used successfully for EKS Access Entry and cluster admin policy association.
+
+> If your username is different, replace `policy_005` with your own ARN in every command below.
 
 ---
 
@@ -66,7 +66,7 @@ Example output:
 Run this entire block on the EC2:
 
 ```bash
-sudo apt-get update
+sudo apt-get update -y
 sudo apt-get install -y \
   curl unzip git jq ca-certificates \
   apt-transport-https software-properties-common \
@@ -84,13 +84,13 @@ aws --version
 
 curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-sudo apt-get update
+sudo apt-get update -y
 sudo apt-get install -y terraform
 terraform version
 
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 chmod +x kubectl
-sudo mv kubectl /usr/local/bin/
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 kubectl version --client
 
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
@@ -126,70 +126,93 @@ cd iac-quality-gate-pipeline
 
 ---
 
-## 5) Fix EKS authentication for the EC2 identity
+## 5) EKS access configuration for your AWS identity
 
-Your cluster is active, but the EC2 principal must be allowed to access it.
-
-First switch the cluster auth mode to API_AND_CONFIG_MAP:
+This is the exact working flow that was confirmed with the actual principal:
 
 ```bash
-aws eks update-cluster-config \
-  --name iac-pipeline-dev-eks \
-  --region ap-south-1 \
-  --access-config '{"authenticationMode":"API_AND_CONFIG_MAP"}'
+arn:aws:iam::567752770098:user/policy_005
 ```
 
-Then wait for the cluster to be active:
+### 5.1) Check the current AWS identity
 
 ```bash
-aws eks wait cluster-active --name iac-pipeline-dev-eks --region ap-south-1
+aws sts get-caller-identity --query Arn --output text
 ```
 
-Now add the current EC2 identity to the cluster:
+Expected output:
+
+```bash
+arn:aws:iam::567752770098:user/policy_005
+```
+
+### 5.2) Update kubeconfig for the cluster
+
+```bash
+aws eks update-kubeconfig --region ap-south-1 --name iac-pipeline-dev-eks
+```
+
+### 5.3) Create access entry for your AWS principal
+
+Use your exact ARN. For this project, it is:
 
 ```bash
 aws eks create-access-entry \
   --cluster-name iac-pipeline-dev-eks \
   --region ap-south-1 \
-  --principal-arn $(aws sts get-caller-identity --query Arn --output text) \
+  --principal-arn arn:aws:iam::567752770098:user/policy_005 \
   --type STANDARD
+```
 
+### 5.4) Associate the cluster admin policy
+
+```bash
 aws eks associate-access-policy \
   --cluster-name iac-pipeline-dev-eks \
   --region ap-south-1 \
-  --principal-arn $(aws sts get-caller-identity --query Arn --output text) \
+  --principal-arn arn:aws:iam::567752770098:user/policy_005 \
   --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
   --access-scope type=cluster
 ```
 
-Then update kubeconfig:
+### 5.5) Verify access
 
 ```bash
-aws eks update-kubeconfig --region ap-south-1 --name iac-pipeline-dev-eks
 kubectl get nodes
+kubectl get pods -A
 ```
 
-If kubectl still fails, check the ARN from:
-
-```bash
-aws sts get-caller-identity
-```
-
-and use the exact ARN in the commands above.
+If the command works and returns node names in `Ready` state, the EKS access configuration is successfully completed.
 
 ---
 
-## 6) Create the EKS nodegroup if it is missing
+## 6) Important note about authentication mode
 
-Your cluster may exist but have no worker nodes. This is the main issue causing `Pending` pods.
+The earlier error:
 
-Check:
+```bash
+Unsupported authentication mode update from API_AND_CONFIG_MAP to API_AND_CONFIG_MAP
+```
+
+means the system is already on the correct authentication mode and is trying to reapply the same value.
+
+Do not keep changing it again. For this project, the working setup is already valid with `API_AND_CONFIG_MAP` and access entries.
+
+You do not need to force-update the cluster config again unless you are intentionally changing the EKS auth mode for a different reason.
+
+---
+
+## 7) Create the EKS nodegroup if it is missing
+
+A cluster can exist and still have no worker nodes. This is a very common reason for `Pending` pods.
+
+Check nodegroups:
 
 ```bash
 aws eks list-nodegroups --cluster-name iac-pipeline-dev-eks --region ap-south-1
 ```
 
-If it returns an empty list, create the nodegroup:
+If the result is empty, create the nodegroup:
 
 ```bash
 aws eks create-nodegroup \
@@ -202,7 +225,7 @@ aws eks create-nodegroup \
   --region ap-south-1
 ```
 
-Wait until the nodegroup is active:
+Wait until it is active:
 
 ```bash
 aws eks wait nodegroup-active \
@@ -218,15 +241,33 @@ kubectl get nodes
 kubectl get pods -A
 ```
 
-If nodes are ready, the cluster is finally usable.
+The expected result is 2 Ready nodes.
 
 ---
 
-## 7) Terraform usage
+## 8) Terraform usage on a fresh EC2
 
-Use Terraform only when the required AWS resources are missing. If you already have an active cluster and IAM roles, do not repeatedly run a full create for everything because AWS will return already-exists errors.
+Terraform is required only after the cluster is reachable and ready. If the cluster already exists and the EKS nodes are `Ready`, do not re-run a full Terraform create unless you truly need to recreate resources.
 
-For a fresh environment, run:
+Install Terraform if it is missing:
+
+```bash
+sudo apt-get update -y
+sudo apt-get install -y gnupg software-properties-common curl
+
+wget -O- https://apt.releases.hashicorp.com/gpg | \
+  gpg --dearmor | \
+  sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+  sudo tee /etc/apt/sources.list.d/hashicorp.list
+
+sudo apt-get update -y
+sudo apt-get install -y terraform
+terraform version
+```
+
+Then run:
 
 ```bash
 cd ~/iac-quality-gate-pipeline/terraform
@@ -235,11 +276,15 @@ terraform plan
 terraform apply -auto-approve
 ```
 
-If resources already exist, the faster path is simply to create the missing nodegroup and continue with the app deployment.
+If the cluster and AWS resources already exist, the safer flow is:
+
+1. `kubectl get nodes` to confirm EKS is accessible.
+2. Create missing nodegroup if necessary.
+3. Continue with project bootstrap and deployment.
 
 ---
 
-## 8) Run the project bootstrap and deployment
+## 9) Run the project bootstrap and deployment
 
 Once the cluster is active and nodes are ready:
 
@@ -258,6 +303,55 @@ kubectl get pods -A
 kubectl get svc -A
 kubectl get ingress -A
 ```
+
+---
+
+## 10) Monitoring access
+
+Grafana and Prometheus are expected to be installed and exposed using the configured ports.
+
+Access them using:
+
+- Grafana: `http://<EC2_PUBLIC_IP>:3000`
+- Prometheus: `http://<EC2_PUBLIC_IP>:9090`
+- Jenkins: `http://<EC2_PUBLIC_IP>:8080`
+
+---
+
+## 11) Final working principle for this project
+
+The correct AWS identity flow is:
+
+```text
+AWS IAM user / principal
+      │
+      ▼
+arn:aws:iam::567752770098:user/policy_005
+      │
+      ▼
+EKS Access Entry
+      │
+      ▼
+AmazonEKSClusterAdminPolicy
+      │
+      ▼
+kubectl access to the cluster
+      │
+      ▼
+EKS nodes become Ready
+```
+
+This is the key fact to remember when setting up a new EC2 instance:
+
+- Check your AWS ARN.
+- Use that exact ARN in `create-access-entry`.
+- Attach `AmazonEKSClusterAdminPolicy`.
+- Run `aws eks update-kubeconfig`.
+- Verify with `kubectl get nodes`.
+- If nodegroup is missing, create it.
+- Only then proceed with Terraform and project deployment.
+
+This is the stable, verified setup for a fresh EC2 environment in ap-south-1.
 
 ---
 
