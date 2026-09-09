@@ -12,7 +12,7 @@
 set -eo pipefail
 
 ENV="${1:-dev}"
-REGION="${AWS_REGION:-us-east-1}"
+REGION="${AWS_REGION:-ap-south-1}"
 SSM_PREFIX="/iac-pipeline/${ENV}"
 
 echo "=========================================================="
@@ -146,10 +146,18 @@ if [[ -n "$PARAMETERS" && "$PARAMETERS" != '{"Parameters":[]}' ]]; then
     if [[ -n "$CLUSTER_NAME" && "$CLUSTER_NAME" != "null" ]]; then
         echo "[INFO] Updating kubeconfig for ${CLUSTER_NAME}..."
         aws eks update-kubeconfig --region "${REGION}" --name "${CLUSTER_NAME}"
-        echo "[OK] Kubeconfig updated successfully."
+        aws eks wait cluster-active --region "${REGION}" --name "${CLUSTER_NAME}"
+        echo "[OK] Kubeconfig updated successfully and cluster is active."
+    else
+        echo "[WARN] SSM exists but cluster name is empty. Run Terraform and publish the cluster metadata first."
     fi
 else
     echo "[INFO] No parameters found under ${SSM_PREFIX} yet. Run Terraform to provision the infrastructure."
+    echo "[INFO] To provision the environment on a fresh AWS account: bash scripts/setup-all.sh ${ENV}"
 fi
 
+echo "[INFO] Helpful next steps:"
+echo "  1) bash scripts/setup.sh ${ENV}  -> reconnect to cluster + install/repair monitoring"
+echo "  2) bash scripts/deploy.sh ${ENV} latest -> deploy app to Kubernetes"
+echo "  3) bash scripts/rollback.sh ${ENV} -> roll back the last deployment"
 echo "[SUCCESS] Instance bootstrap completed. Environment is ready for pipeline operations!"

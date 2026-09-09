@@ -216,6 +216,30 @@ No local `.tfstate` files or AWS access keys are shared between machines.
    ```
    `bootstrap.sh` automatically detects the OS, installs missing tools (`terraform`, `kubectl`, `helm`, `docker`, `aws-cli`), queries SSM for cluster coordinates, and runs `aws eks update-kubeconfig`.
 
+### Fresh EC2 startup behavior
+
+This project is designed so a newly started EC2 instance can rejoin the active cluster without using any old local configuration.
+
+```bash
+# 1) Login to the EC2 instance with your AWS role / instance profile active
+aws sts get-caller-identity
+
+# 2) Clone and bootstrap the project on the new instance
+git clone https://github.com/adityapukhraj1303/iac-quality-gate-pipeline.git
+cd iac-quality-gate-pipeline
+bash scripts/bootstrap.sh dev
+
+# 3) Reconnect to the active cluster and verify it is ready
+bash scripts/setup.sh dev
+
+# 4) Deploy the application to the current cluster
+bash scripts/deploy.sh dev latest
+```
+
+This works because the cluster metadata is stored in AWS SSM at `/iac-pipeline/{env}/cluster_name`, `/iac-pipeline/{env}/cluster_endpoint`, and related values. Every fresh instance reads those values, reconnects to the current cluster, and does not depend on a previous instance's local kubeconfig or Terraform state.
+
+> When you start a new EC2 instance, always use the bootstrap + setup flow above instead of relying on old `~/.kube/config` or stale local state files.
+
 ---
 
 ## 📖 Day 1 Runbook: Deploying from Scratch on Fresh AWS

@@ -22,7 +22,7 @@ terraform {
   # backend "s3" {
   #   bucket         = "iac-pipeline-terraform-state-backend"
   #   key            = "state/terraform.tfstate"
-  #   region         = "us-east-1"
+  #   region         = "ap-south-1"
   #   dynamodb_table = "iac-pipeline-terraform-state-locks"
   #   encrypt        = true
   # }

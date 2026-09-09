@@ -13,6 +13,16 @@ echo " Triggering Automated Rollback for iac-quality-gate-app"
 echo " Environment: ${ENV} | Namespace: ${NAMESPACE}"
 echo "=========================================================="
 
+CLUSTER_NAME=$(aws ssm get-parameter --name "/iac-pipeline/${ENV}/cluster_name" --query 'Parameter.Value' --output text 2>/dev/null || true)
+if [[ -n "${CLUSTER_NAME}" && "${CLUSTER_NAME}" != "None" && "${CLUSTER_NAME}" != "null" ]]; then
+    echo "[INFO] Refreshing kubeconfig for cluster: ${CLUSTER_NAME}"
+    aws eks update-kubeconfig --region "${AWS_REGION:-ap-south-1}" --name "${CLUSTER_NAME}"
+    aws eks wait cluster-active --region "${AWS_REGION:-ap-south-1}" --name "${CLUSTER_NAME}"
+else
+    echo "[ERROR] EKS cluster metadata is missing in SSM for environment '${ENV}'. Run Terraform first." >&2
+    exit 1
+fi
+
 echo "[INFO] Rolling back deployment to previous stable revision..."
 kubectl rollout undo deployment/iac-quality-gate-app -n "${NAMESPACE}"
 
