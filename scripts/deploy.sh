@@ -17,13 +17,15 @@ echo "=========================================================="
 
 # 0. Validate AWS/cluster access before any kubectl action.
 CLUSTER_NAME=$(aws ssm get-parameter --name "/iac-pipeline/${ENV}/cluster_name" --query 'Parameter.Value' --output text 2>/dev/null || true)
-if [[ -n "${CLUSTER_NAME}" && "${CLUSTER_NAME}" != "None" && "${CLUSTER_NAME}" != "null" ]]; then
+if [[ -z "${CLUSTER_NAME}" || "${CLUSTER_NAME}" == "None" || "${CLUSTER_NAME}" == "null" ]]; then
+    echo "[ERROR] SSM parameter /iac-pipeline/${ENV}/cluster_name is missing. Run 'terraform apply' in the terraform directory first, then verify the five SSM parameters exist before running this script." >&2
+    exit 1
+fi
+
+if [[ -n "${CLUSTER_NAME}" ]]; then
     echo "[INFO] Refreshing kubeconfig for cluster: ${CLUSTER_NAME}"
     aws eks update-kubeconfig --region "${AWS_REGION:-ap-south-1}" --name "${CLUSTER_NAME}"
     aws eks wait cluster-active --region "${AWS_REGION:-ap-south-1}" --name "${CLUSTER_NAME}"
-else
-    echo "[ERROR] EKS cluster metadata is missing in SSM for environment '${ENV}'. Run Terraform first." >&2
-    exit 1
 fi
 
 if ! docker ps >/dev/null 2>&1; then

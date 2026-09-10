@@ -2,6 +2,18 @@
 # Least-Privilege IAM Module (EKS Cluster, Node Group, and SSM Profiles)
 # ==============================================================================
 
+locals {
+  ssm_parameter_names = [
+    "/iac-pipeline/${var.environment}/cluster_name",
+    "/iac-pipeline/${var.environment}/cluster_endpoint",
+    "/iac-pipeline/${var.environment}/ecr_repository_url",
+    "/iac-pipeline/${var.environment}/vpc_id",
+    "/iac-pipeline/${var.environment}/grafana_url",
+  ]
+}
+
+data "aws_caller_identity" "current" {}
+
 # 1. EKS Cluster Control Plane IAM Role
 resource "aws_iam_role" "eks_cluster_role" {
   name = "${var.project_name}-${var.environment}-eks-cluster-role"
@@ -108,16 +120,23 @@ resource "aws_iam_role_policy_attachment" "runner_ssm_core" {
 
 resource "aws_iam_policy" "runner_pipeline_policy" {
   name        = "${var.project_name}-${var.environment}-runner-pipeline-policy"
-  description = "Permissions for CI Runner to interact with ECR, EKS, and SSM Parameter Store"
+  description = "Permissions for CI Runner to interact with the project ECR repo, EKS cluster, and the specific SSM parameters used by this environment"
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ECRAccess"
+        Sid    = "ECRTokenAccess"
         Effect = "Allow"
         Action = [
-          "ecr:GetAuthorizationToken",
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "ECRRepositoryAccess"
+        Effect = "Allow"
+        Action = [
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchGetImage",
@@ -126,23 +145,39 @@ resource "aws_iam_policy" "runner_pipeline_policy" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload"
         ]
-        Resource = "*"
+        Resource = var.ecr_repository_arn
       },
       {
-        Sid    = "SSMParametersAccess"
+        Sid    = "SSMPathAccess"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParametersByPath"
+        ]
+        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/iac-pipeline/${var.environment}/*"
+      },
+      {
+        Sid    = "SSMExactParameterAccess"
         Effect = "Allow"
         Action = [
           "ssm:GetParameter",
-          "ssm:GetParameters",
-          "ssm:GetParametersByPath"
+          "ssm:GetParameters"
         ]
-        Resource = "arn:aws:ssm:*:*:parameter/iac-pipeline/*"
+        Resource = [
+          for name in local.ssm_parameter_names : "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${name}"
+        ]
       },
       {
-        Sid    = "EKSAccess"
+        Sid    = "EKSDescribeClusterAccess"
         Effect = "Allow"
         Action = [
-          "eks:DescribeCluster",
+          "eks:DescribeCluster"
+        ]
+        Resource = var.cluster_arn
+      },
+      {
+        Sid    = "EKSListClustersAccess"
+        Effect = "Allow"
+        Action = [
           "eks:ListClusters"
         ]
         Resource = "*"

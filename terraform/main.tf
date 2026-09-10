@@ -21,9 +21,12 @@ module "vpc" {
 
 # 2. IAM Roles & Instance Profiles Module
 module "iam" {
-  source       = "./modules/iam"
-  project_name = var.project_name
-  environment  = var.environment
+  source             = "./modules/iam"
+  project_name       = var.project_name
+  environment        = var.environment
+  aws_region         = var.aws_region
+  cluster_arn        = module.eks.cluster_arn
+  ecr_repository_arn = module.ecr.repository_arn
 }
 
 # 3. ECR Repository Module
