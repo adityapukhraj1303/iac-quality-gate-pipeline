@@ -1,42 +1,174 @@
 ﻿# iac-quality-gate-pipeline
 
-This repository provisions the AWS platform and deploys a containerized Bash microservice through Terraform, Kubernetes, Jenkins, and SonarQube. The project is configured for the AWS region `ap-south-1` and expects all infrastructure and deployment steps to run in that region.
+This project automates an end-to-end DevOps workflow on AWS using Terraform, Docker, Kubernetes (EKS), Prometheus, Grafana, and Jenkins. It provisions the infrastructure, populates AWS SSM parameters, bootstraps the EC2 environment, connects to the cluster, deploys the application, and exposes monitoring dashboards.
 
-## Project purpose
+## Overview
 
-The repository automates the following:
-- AWS networking, IAM, ECR, and EKS provisioning with Terraform
-- publishing infrastructure metadata to AWS SSM Parameter Store
-- bootstrap of EC2 instances with the required CLI and cluster tools
-- Kubernetes deployment of the application with rollout checks and smoke tests
-- Jenkins pipeline execution with SonarQube quality gate enforcement
-- monitoring with Prometheus and Grafana
+The repo includes:
 
-## Required AWS region
+- Terraform modules for VPC, IAM, ECR, EKS, and optional EC2 runner
+- AWS SSM parameter publishing for cluster and ECR metadata
+- bootstrap scripts to install tooling and connect kubectl to the AWS cluster
+- Kubernetes deployment scripts for the app
+- Monitoring stack with Prometheus and Grafana
+- Jenkins pipeline support for build, quality gate, and deployment
 
-This project is intentionally pinned to `ap-south-1`.
+## Required AWS setup
 
-- Terraform provider region: `ap-south-1`
-- Terraform dev tfvars: `ap-south-1`
-- Jenkins environment: `AWS_REGION = 'ap-south-1'`
-- bootstrap/deploy scripts default AWS region: `AWS_REGION:-ap-south-1`
+This project is configured for the AWS region `ap-south-1`.
 
-No region references in the current repo should be set to `us-east-1`.
+Make sure your EC2 instance is running in the same region and has an IAM role attached.
 
-## Required setup order
+### Recommended EC2 IAM role
 
-This is the correct startup sequence and it must be followed in this exact order:
+Attach an IAM role with at least the following permissions:
 
-1. Run `terraform apply` in the Terraform directory.
-2. Verify the 5 SSM parameter names exist under `/iac-pipeline/<env>`.
-3. Only after that, run `bootstrap.sh` and `deploy.sh`.
-4. Trigger the Jenkins build only after the cluster, ECR repo, and SSM parameters are present.
+- AmazonEKSClusterPolicy
+- AmazonEKSWorkerNodePolicy
+- AmazonEKS_CNI_Policy
+- AmazonEC2ContainerRegistryReadOnly
+- AmazonSSMManagedInstanceCore
+- EC2 full access for Terraform most of the time
+- EKS full access for Terraform
+- SSM access for parameter lookups
+- CloudWatch and logs access
 
-This order is required because `scripts/deploy.sh` reads `/iac-pipeline/${ENV}/cluster_name` and exits if it is missing.
+After attaching the role, test it:
 
-## Verify the five SSM parameters
+```bash
+aws sts get-caller-identity
+aws eks list-clusters --region ap-south-1
+```
 
-The Terraform root module publishes these exact names:
+If the above works, AWS authentication is ready for Terraform and kubectl.
+
+## Required inbound ports
+
+For a fresh EC2 instance, open these inbound ports in the security group:
+
+- 22 → SSH
+- 80 → HTTP
+- 443 → HTTPS
+- 3000 → Grafana (default)
+- 3001 / 8081 → Grafana alternative live port
+- 8080 → Jenkins
+- 9090 → Prometheus (default)
+- 9091 → Prometheus alternative live port
+- 9093 → Alertmanager
+
+> Do not expose the EKS control plane directly to the internet.
+
+## Install base tools on the EC2 instance
+
+Run the following on a fresh Ubuntu machine:
+
+```bash
+sudo apt-get update -y
+sudo apt-get install -y \
+  curl unzip git jq ca-certificates \
+  gnupg lsb-release software-properties-common \
+  docker.io
+
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+newgrp docker
+
+# AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip -q awscliv2.zip
+sudo ./aws/install
+aws --version
+
+# Terraform
+wget -O- https://apt.releases.hashicorp.com/gpg | \
+  gpg --dearmor | \
+  sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+  sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
+
+sudo apt-get update -y
+sudo apt-get install -y terraform
+terraform version
+
+# kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+kubectl version --client
+
+# Helm
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+helm version
+
+# eksctl
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+sudo mv /tmp/eksctl /usr/local/bin/
+eksctl version
+
+export AWS_REGION=ap-south-1
+aws configure set region ap-south-1
+```
+
+## Optional local Kubernetes practice with Minikube
+
+If you want to practice Kubernetes locally before deploying to EKS, run:
+
+```bash
+sudo apt update -y && sudo apt install -y curl conntrack
+
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+kubectl version --client
+
+curl -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+sudo install minikube /usr/local/bin/minikube
+minikube version
+
+sudo apt install -y docker.io
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+newgrp docker
+
+minikube start --driver=docker
+kubectl get nodes
+```
+
+This gives you a local single-node Kubernetes cluster for learning and smoke testing.
+
+## Clone the repo
+
+```bash
+cd ~
+git clone https://github.com/adityapukhraj1303/iac-quality-gate-pipeline.git
+cd iac-quality-gate-pipeline
+```
+
+## Terraform setup and automatic cluster creation
+
+The repo is designed to provision infrastructure with Terraform and automatically create the EKS cluster if it does not already exist.
+
+### 1. Initialize and apply Terraform
+
+```bash
+cd terraform
+terraform init
+terraform validate
+terraform apply -var-file="environments/dev/terraform.tfvars"
+```
+
+This creates or updates:
+
+- VPC
+- IAM roles
+- ECR repository
+- EKS cluster
+- node group
+- SSM parameters under `/iac-pipeline/dev`
+
+### 2. Verify the SSM parameters
+
+After Terraform apply succeeds, confirm the cluster and repo metadata:
 
 ```bash
 aws ssm get-parameters-by-path \
@@ -46,169 +178,277 @@ aws ssm get-parameters-by-path \
   --output table
 ```
 
-Expected values include:
+Expected keys include:
+
 - `/iac-pipeline/dev/cluster_name`
 - `/iac-pipeline/dev/cluster_endpoint`
 - `/iac-pipeline/dev/ecr_repository_url`
 - `/iac-pipeline/dev/vpc_id`
 - `/iac-pipeline/dev/grafana_url`
 
-Do not run `bootstrap.sh` or `deploy.sh` before these values exist.
+## Bootstrap and project setup
 
-## Terraform workflow
+The project bootstrap scripts are designed to do the heavy lifting for you.
 
-From the repository root:
+### Auto bootstrap flow
+
+Run:
+
+```bash
+cd ~
+cd iac-quality-gate-pipeline
+
+bash scripts/bootstrap.sh dev
+```
+
+What this does:
+
+- checks AWS identity
+- installs required tools if missing
+- looks for cluster info in AWS SSM
+- if the cluster exists, connects kubectl to it
+- if the cluster is missing, runs Terraform apply to create infrastructure
+- updates kubeconfig for EKS
+
+### Setup monitoring and cluster access
+
+Run:
+
+```bash
+bash scripts/setup.sh dev
+```
+
+This script will:
+
+- verify AWS identity
+- fetch cluster information from SSM or AWS
+- connect kubectl to the cluster
+- install or repair Prometheus and Grafana
+- print the Grafana password and access steps
+
+## Deploy the application
+
+After the cluster is active and kubectl works, deploy the app:
+
+```bash
+bash scripts/deploy.sh dev latest
+```
+
+This deploys the containerized app into Kubernetes using the cluster metadata from SSM.
+
+## Verify Kubernetes resources
+
+Check cluster health and pods:
+
+```bash
+kubectl get nodes
+kubectl get pods -A
+kubectl get svc -A
+kubectl get ingress -A
+```
+
+A healthy cluster should show the node in `Ready` state and app pods should be running.
+
+## EKS authentication fix
+
+If you see:
+
+```bash
+error: You must be logged in to the server (the server has asked for the client to provide credentials)
+```
+
+run:
+
+```bash
+aws eks update-kubeconfig --region ap-south-1 --name iac-pipeline-dev-eks
+kubectl get nodes
+```
+
+If the role is still blocked, map the current AWS principal to the cluster:
+
+```bash
+eksctl create iamidentitymapping \
+  --cluster iac-pipeline-dev-eks \
+  --region ap-south-1 \
+  --arn $(aws sts get-caller-identity --query Arn --output text) \
+  --username admin \
+  --group system:masters
+```
+
+Then verify again:
+
+```bash
+kubectl get nodes
+kubectl get pods -A
+```
+
+## Monitoring with Prometheus and Grafana
+
+The repo installs the kube-prometheus-stack via Helm and configures Grafana and Prometheus automatically.
+
+### Check monitoring status
+
+```bash
+bash scripts/monitoring.sh status
+```
+
+### Show Grafana password
+
+```bash
+bash scripts/monitoring.sh password
+```
+
+### Run Grafana on a non-default port
+
+The default Grafana port in the stack is 3000 internally, but for easier access from an EC2 instance or browser, use a custom forwarded port:
+
+```bash
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 8081:80
+```
+
+Open in browser:
+
+```text
+http://<EC2_PUBLIC_IP>:8081
+```
+
+Login credentials:
+
+- username: `admin`
+- password: from `bash scripts/monitoring.sh password`
+
+### Run Prometheus on a non-default port
+
+```bash
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9091:9090
+```
+
+Open in browser:
+
+```text
+http://<EC2_PUBLIC_IP>:9091
+```
+
+### Access through the project script
+
+```bash
+bash scripts/monitoring.sh port-forward grafana
+bash scripts/monitoring.sh port-forward prometheus
+```
+
+This script forwards:
+
+- Grafana → `localhost:3000`
+- Prometheus → `localhost:9090`
+
+If you want to expose them on different public ports, use the custom command examples above when tunneling through SSH or a reverse proxy.
+
+## Jenkins setup
+
+Jenkins can be used to run the pipeline after the cluster and repo are in place.
+
+### Required tools on Jenkins agent
+
+Install these on the Jenkins node or agent:
+
+- AWS CLI
+- Docker
+- kubectl
+- Terraform
+- Helm
+- SonarQube scanner
+
+Ensure the Jenkins machine has AWS credentials via EC2 instance profile or IAM role.
+
+## Full setup in one sequence
+
+For a brand-new EC2 instance, run this sequence:
+
+```bash
+sudo apt-get update -y
+sudo apt-get install -y \
+  curl unzip git jq ca-certificates \
+  gnupg lsb-release software-properties-common \
+  docker.io
+
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+newgrp docker
+
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip -q awscliv2.zip
+sudo ./aws/install
+
+wget -O- https://apt.releases.hashicorp.com/gpg | \
+  gpg --dearmor | \
+  sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+  sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
+
+sudo apt-get update -y
+sudo apt-get install -y terraform
+
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+sudo mv /tmp/eksctl /usr/local/bin/
+
+export AWS_REGION=ap-south-1
+aws configure set region ap-south-1
+aws sts get-caller-identity
+
+cd ~
+git clone https://github.com/adityapukhraj1303/iac-quality-gate-pipeline.git
+cd iac-quality-gate-pipeline
+
+bash scripts/bootstrap.sh dev
+bash scripts/setup.sh dev
+bash scripts/deploy.sh dev latest
+```
+
+## Final verification
+
+After deployment, confirm everything works:
+
+```bash
+kubectl get nodes
+kubectl get pods -A
+kubectl get svc -A
+bash scripts/monitoring.sh status
+```
+
+Then access:
+
+- Application: check the deployed service or ingress
+- Grafana: `http://<EC2_PUBLIC_IP>:8081`
+- Prometheus: `http://<EC2_PUBLIC_IP>:9091`
+
+## Summary
+
+This repository is designed to work as a real AWS DevOps platform:
+
+- Terraform creates the base cloud infrastructure
+- Docker packages the app
+- Kubernetes runs the app in EKS
+- Prometheus and Grafana provide live monitoring
+- Jenkins can orchestrate CI/CD pipelines
+- bootstrap and setup scripts automate the process
+
+The key workflow is:
 
 ```bash
 cd terraform
 terraform init
 terraform apply -var-file="environments/dev/terraform.tfvars"
-```
-
-After `terraform apply` succeeds, verify SSM:
-
-```bash
-aws ssm get-parameters-by-path --path "/iac-pipeline/dev" --recursive --query "Parameters[*].[Name,Value]" --output table
-```
-
-Then proceed to cluster bootstrap and deployment:
-
-```bash
 cd ..
 bash scripts/bootstrap.sh dev
+bash scripts/setup.sh dev
 bash scripts/deploy.sh dev latest
 ```
 
-## Bootstrap and deployment scripts
-
-The bootstrap flow performs environment detection, AWS login validation, package installation, and kubeconfig setup. It also checks for the cluster metadata under `/iac-pipeline/${ENV}` and can create infrastructure when the cluster is missing.
-
-The deploy flow expects the cluster metadata to already exist and exits cleanly if the parameter is absent.
-
-### Required preflight behavior
-
-The deploy script must do this before any `kubectl` or EKS action:
-
-```bash
-aws ssm get-parameter --name "/iac-pipeline/${ENV}/cluster_name" --query 'Parameter.Value' --output text
-```
-
-If that parameter is missing, the script must fail with a clear message telling the operator to run:
-
-```bash
-cd terraform
-terraform apply -var-file="environments/dev/terraform.tfvars"
-```
-
-## Jenkins setup
-
-A real Jenkins installation is required before the first pipeline build.
-
-### What is configured in this repo
-- The pipeline does not declare any explicit Jenkins credential IDs.
-- Authentication for AWS is expected to come from the Jenkins agent's IAM instance profile / EC2 role.
-- The SonarQube integration name is exactly `SonarQube-Server`.
-
-### Required Jenkins configuration before the first build
-
-In Jenkins, go to `Manage Jenkins` > `System` and configure:
-
-1. A SonarQube server named exactly: `SonarQube-Server`
-2. The Jenkins agent must have these tools installed:
-   - AWS CLI
-   - Docker
-   - kubectl
-   - Terraform
-   - sonar-scanner
-3. The Jenkins agent must have AWS permissions via IAM instance profile or equivalent configured credentials.
-
-The pipeline references the SonarQube server by `withSonarQubeEnv('SonarQube-Server')` and calls `waitForQualityGate()`.
-
-## Jenkins pipeline parameters
-
-The Jenkins pipeline defines four parameters:
-
-- `ENVIRONMENT` — target environment (`dev` or `prod`)
-- `IMAGE_TAG` — Docker image tag to build and deploy, default is `build-${BUILD_NUMBER}`
-- `SKIP_QUALITY_GATE` — emergency override to skip the SonarQube quality gate when set to `true`
-- `AUTO_ROLLBACK` — if `true`, attempts to roll back the Kubernetes deployment after a smoke-test failure
-
-Example build parameters:
-
-```bash
-ENVIRONMENT=dev
-IMAGE_TAG=build-42
-SKIP_QUALITY_GATE=false
-AUTO_ROLLBACK=true
-```
-
-## IAM policy behavior
-
-The IAM policy is now narrowed and uses specific ARNs instead of wildcard broad access.
-
-Post-fix behavior:
-- ECR permissions are scoped to the specific repository ARN
-- EKS `DescribeCluster` access is scoped to the specific cluster ARN
-- SSM access is narrowed to the exact five SSM parameter ARNs used by the project
-- wildcard access is not used for the project-specific actions that are required by Jenkins and CI runners
-
-This is the intended least-privilege model for the runner and deployment pipeline.
-
-## Application and Kubernetes details
-
-The deployment manifest defines the container name as `bash-microservice` and the deploy script updates that container image using:
-
-```bash
-kubectl set image deployment/iac-quality-gate-app bash-microservice=${IMAGE_TARGET} -n ${NAMESPACE}
-```
-
-The application health check is served at `/health` and the post-deploy smoke test checks it before declaring success.
-
-## Repository structure
-
-```text
-.
-├── app/
-├── terraform/
-│   ├── backend.tf
-│   ├── main.tf
-│   ├── outputs.tf
-│   ├── variables.tf
-│   └── environments/
-│       ├── dev/
-│       └── prod/
-├── scripts/
-│   ├── bootstrap.sh
-│   ├── deploy.sh
-│   └── ...
-├── k8s/
-├── jenkins/
-│   ├── Jenkinsfile
-│   └── sonar-project.properties
-├── docker/
-├── monitoring/
-├── docs/
-├── README.md
-└── LICENSE
-```
-
-## TODO(review)
-
-- Confirm the exact ECR repository ARN and EKS cluster ARN used at runtime in your AWS account before you attach the final IAM policy in a production environment.
-- Validate whether your AWS IAM model permits `eks:ListClusters` to be narrowed beyond `*`; AWS semantics may require `ListClusters` to remain wildcard-scoped.
-- Validate the full pipeline in a real AWS environment because this session could not run Terraform or shell validation tools here: the local environment used for this review does not have `terraform` or a Unix `bash` runtime installed.
-
-## Summary
-
-The supported pattern for this project is:
-
-```bash
-cd terraform
-terraform apply -var-file="environments/dev/terraform.tfvars"
-aws ssm get-parameters-by-path --path "/iac-pipeline/dev" --recursive --query "Parameters[*].[Name,Value]" --output table
-cd ..
-bash scripts/bootstrap.sh dev
-bash scripts/deploy.sh dev latest
-```
-
-This sequence ensures the required SSM parameters exist before the deployment and bootstrap scripts run, which is the safe and supported path for a first successful deployment.
+This sequence sets up the cluster, installs monitoring, and deploys the application automatically.
