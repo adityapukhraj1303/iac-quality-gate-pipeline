@@ -2,6 +2,12 @@
 
 This project automates an end-to-end DevOps workflow on AWS using Terraform, Docker, Kubernetes (EKS), Prometheus, Grafana, and Jenkins. It provisions the infrastructure, populates AWS SSM parameters, bootstraps the EC2 environment, connects to the cluster, deploys the application, and exposes monitoring dashboards.
 
+## Result
+
+The project deployment result is documented in [result.md](result.md), including the live Grafana monitoring dashboard image.
+
+![Grafana dashboard result](docs/images/grafana-dashboard-result.svg)
+
 ## Overview
 
 The repo includes:

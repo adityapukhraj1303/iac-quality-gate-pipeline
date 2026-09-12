@@ -21,6 +21,12 @@ It covers:
 
 > Use this as your single copy-paste setup guide. It is designed to minimize issues on a fresh EC2 instance.
 
+## Deployment result
+
+The deployment outcome and Grafana monitoring dashboard are captured in [result.md](result.md).
+
+![Grafana dashboard result](docs/images/grafana-dashboard-result.svg)
+
 ---
 
 ## 1) EC2 security group rules

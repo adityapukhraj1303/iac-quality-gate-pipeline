@@ -1,0 +1,157 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Grafana dashboard result</title>
+  <desc id="desc">Dark themed monitoring dashboard showing CPU and memory usage charts for EKS cluster.</desc>
+  <defs>
+    <linearGradient id="bgGrad" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#0b0f17"/>
+    </linearGradient>
+    <linearGradient id="panelGrad" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#111922"/>
+      <stop offset="100%" stop-color="#0d141d"/>
+    </linearGradient>
+    <linearGradient id="goldArea" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#f2d65b" stop-opacity="0.92"/>
+      <stop offset="100%" stop-color="#d4a91d" stop-opacity="0.78"/>
+    </linearGradient>
+    <linearGradient id="greenArea" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#5ac2a4" stop-opacity="0.88"/>
+      <stop offset="100%" stop-color="#2a8f73" stop-opacity="0.7"/>
+    </linearGradient>
+    <linearGradient id="blueArea" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#3e78ff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#1d3d7a" stop-opacity="0.75"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bgGrad)"/>
+
+  <g>
+    <rect x="0" y="0" width="280" height="900" fill="#101821"/>
+    <rect x="0" y="0" width="280" height="53" fill="#0f1721"/>
+    <circle cx="35" cy="26" r="14" fill="#f39a1d"/>
+    <circle cx="35" cy="26" r="7" fill="#111821"/>
+    <text x="62" y="32" font-size="20" font-family="Segoe UI, Arial, sans-serif" fill="#f4f7fb" font-weight="700">Grafana</text>
+
+    <text x="20" y="110" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#b3c0cf">Bookmarks</text>
+    <text x="20" y="155" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Starred</text>
+    <rect x="15" y="190" width="250" height="52" rx="8" fill="#1f2a35"/>
+    <text x="48" y="223" font-size="16" font-family="Segoe UI, Arial, sans-serif" fill="#f7fafc" font-weight="700">Dashboards</text>
+    <text x="20" y="270" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Playlists</text>
+    <text x="20" y="315" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Snapshots</text>
+    <text x="20" y="360" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Library panels</text>
+    <text x="20" y="405" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Shared dashboards</text>
+    <text x="20" y="450" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Recently deleted</text>
+    <text x="20" y="510" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Explore</text>
+    <text x="20" y="555" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Drilldown</text>
+
+    <line x1="0" y1="585" x2="280" y2="585" stroke="#1d2933"/>
+    <text x="20" y="640" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Admin</text>
+    <text x="20" y="685" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Alerting</text>
+    <text x="20" y="730" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Connections</text>
+    <text x="20" y="775" font-size="15" font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">Data sources</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="300" y="30" width="1260" height="210" rx="10" fill="url(#panelGrad)" stroke="#1c2733"/>
+    <rect x="300" y="270" width="610" height="290" rx="10" fill="url(#panelGrad)" stroke="#1c2733"/>
+    <rect x="950" y="270" width="610" height="290" rx="10" fill="url(#panelGrad)" stroke="#1c2733"/>
+    <rect x="300" y="590" width="610" height="270" rx="10" fill="url(#panelGrad)" stroke="#1c2733"/>
+    <rect x="950" y="590" width="610" height="270" rx="10" fill="url(#panelGrad)" stroke="#1c2733"/>
+  </g>
+
+  <g font-family="Segoe UI, Arial, sans-serif" fill="#dfe7ef">
+    <text x="338" y="85" font-size="24">CPU Usage %</text>
+    <text x="1240" y="85" font-size="24">Memory Usage %</text>
+    <text x="338" y="635" font-size="24">Pods Running</text>
+    <text x="1240" y="635" font-size="24">Pods</text>
+  </g>
+
+  <g stroke="#2c3943" stroke-width="1">
+    <path d="M 360 205 L 1520 205"/>
+    <path d="M 360 155 L 1520 155"/>
+    <path d="M 360 105 L 1520 105"/>
+    <path d="M 360 245 L 1520 245"/>
+
+    <path d="M 360 360 L 890 360"/>
+    <path d="M 360 400 L 890 400"/>
+    <path d="M 360 440 L 890 440"/>
+    <path d="M 360 480 L 890 480"/>
+    <path d="M 360 520 L 890 520"/>
+    <path d="M 360 560 L 890 560"/>
+
+    <path d="M 1010 360 L 1530 360"/>
+    <path d="M 1010 400 L 1530 400"/>
+    <path d="M 1010 440 L 1530 440"/>
+    <path d="M 1010 480 L 1530 480"/>
+    <path d="M 1010 520 L 1530 520"/>
+    <path d="M 1010 560 L 1530 560"/>
+  </g>
+
+  <g font-family="Segoe UI, Arial, sans-serif" fill="#a7b5c4" font-size="14">
+    <text x="514" y="250">12:40</text>
+    <text x="1280" y="250">12:45</text>
+    <text x="510" y="575">12:40</text>
+    <text x="1280" y="575">12:45</text>
+  </g>
+
+  <g>
+    <path d="M 364 208 L 414 203 L 464 177 L 514 166 L 564 173 L 614 160 L 664 170 L 714 183 L 764 190 L 814 202 L 864 205 L 890 212" fill="none" stroke="#f1d04d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 364 205 L 414 205 L 464 194 L 514 187 L 564 185 L 614 178 L 664 181 L 714 188 L 764 180 L 814 175 L 864 173 L 890 175" fill="url(#goldArea)" opacity="0.9"/>
+
+    <path d="M 1010 198 L 1060 184 L 1110 175 L 1160 169 L 1210 178 L 1260 186 L 1310 181 L 1360 170 L 1410 162 L 1460 168 L 1510 173" fill="none" stroke="#f0d157" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 1010 200 L 1060 192 L 1110 176 L 1160 170 L 1210 175 L 1260 182 L 1310 177 L 1360 168 L 1410 160 L 1460 164 L 1510 170" fill="url(#goldArea)" opacity="0.8"/>
+
+    <path d="M 1010 315 L 1010 200 L 1510 200 L 1510 315" fill="url(#greenArea)" opacity="0.25"/>
+    <path d="M 1010 315 L 1010 250 L 1060 260 L 1110 245 L 1160 255 L 1210 264 L 1260 235 L 1310 220 L 1360 228 L 1410 245 L 1460 234 L 1510 220 L 1510 315" fill="url(#greenArea)" opacity="0.75"/>
+  </g>
+
+  <g>
+    <rect x="360" y="680" width="520" height="124" fill="url(#blueArea)" opacity="0.9"/>
+    <rect x="360" y="680" width="520" height="18" fill="#1a2d4a" opacity="0.8"/>
+    <g fill="#dfe7ef" font-family="Segoe UI, Arial, sans-serif" font-size="16">
+      <text x="390" y="705">0</text>
+      <text x="390" y="760">5</text>
+      <text x="390" y="810">10</text>
+    </g>
+  </g>
+
+  <g>
+    <rect x="975" y="662" width="480" height="150" fill="#1b2430" opacity="0.8"/>
+    <rect x="1000" y="732" width="26" height="55" fill="#3b4be6"/>
+    <rect x="1035" y="715" width="26" height="72" fill="#3b4be6"/>
+    <rect x="1070" y="706" width="26" height="81" fill="#3b4be6"/>
+    <rect x="1105" y="695" width="26" height="92" fill="#3b4be6"/>
+    <rect x="1140" y="708" width="26" height="79" fill="#3b4be6"/>
+    <rect x="1175" y="700" width="26" height="87" fill="#3b4be6"/>
+    <rect x="1210" y="680" width="26" height="107" fill="#3b4be6"/>
+    <rect x="1245" y="688" width="26" height="99" fill="#3b4be6"/>
+    <rect x="1280" y="712" width="26" height="75" fill="#3b4be6"/>
+    <rect x="1315" y="716" width="26" height="71" fill="#3b4be6"/>
+    <rect x="1350" y="704" width="26" height="83" fill="#3b4be6"/>
+    <rect x="1385" y="724" width="26" height="63" fill="#3b4be6"/>
+    <rect x="1420" y="730" width="26" height="57" fill="#3b4be6"/>
+  </g>
+
+  <g font-family="Segoe UI, Arial, sans-serif" fill="#a7b5c4" font-size="12">
+    <text x="530" y="300">10.0.10.96:9100</text>
+    <text x="1170" y="300">10.0.20.235:9100</text>
+  </g>
+
+  <g>
+    <path d="M 388 240 L 380 210 L 420 210 L 412 240" fill="#f1d04d" opacity="0.9"/>
+    <path d="M 468 225 L 460 205 L 500 205 L 492 225" fill="#f1d04d" opacity="0.9"/>
+    <path d="M 548 220 L 540 198 L 580 198 L 572 220" fill="#f1d04d" opacity="0.9"/>
+    <path d="M 628 232 L 620 210 L 660 210 L 652 232" fill="#f1d04d" opacity="0.9"/>
+    <path d="M 708 228 L 700 206 L 740 206 L 732 228" fill="#f1d04d" opacity="0.9"/>
+    <path d="M 788 218 L 780 204 L 820 204 L 812 218" fill="#f1d04d" opacity="0.9"/>
+    <path d="M 860 220 L 852 208 L 890 208 L 882 220" fill="#f1d04d" opacity="0.9"/>
+  </g>
+
+  <g fill="#c2d0dd" font-family="Segoe UI, Arial, sans-serif" font-size="12">
+    <text x="1200" y="580">cluster scale monitored by kube-prometheus-stack</text>
+  </g>
+</svg>
